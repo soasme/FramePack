@@ -7,8 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
 import time
 import queue
+import threading
 
-os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
+if 'HF_HOME' not in os.environ:
+    os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
 import torch
 import traceback
@@ -117,6 +119,8 @@ app = FastAPI(title="FramePack-F1 Video Generation API", version="1.0.0")
 thread_pool = ThreadPoolExecutor(max_workers=args.workers)
 semaphore = asyncio.Semaphore(args.workers)
 
+cancel_event = threading.Event()
+
 class VideoGenerationRequest(BaseModel):
     input_image: str  # base64 encoded image
     prompt: str = ""
@@ -153,7 +157,7 @@ def decode_base64_image(base64_string: str) -> np.ndarray:
 
 
 @torch.no_grad()
-def video_generation_worker(request: VideoGenerationRequest):
+def video_generation_worker(request: VideoGenerationRequest, cancel_event=None):
     """Main video generation worker function."""
     
     # Decode input image
@@ -262,6 +266,10 @@ def video_generation_worker(request: VideoGenerationRequest):
         total_generated_latent_frames = 1
 
         for section_index in range(total_latent_sections):
+            if cancel_event and cancel_event.is_set():
+                yield yield_progress("cancelled", 0)
+                return
+
             print(f'section_index = {section_index}, total_latent_sections = {total_latent_sections}')
 
             if not high_vram:
@@ -353,7 +361,10 @@ def video_generation_worker(request: VideoGenerationRequest):
 
             current_frames = int(max(0, total_generated_latent_frames * 4 - 3))
             video_length = max(0, (total_generated_latent_frames * 4 - 3) / 30)
-            yield yield_progress("section_complete", 95, None, current_frames, video_length, output_filename)
+            # Calculate section_complete progress
+            section_progress = 25 + ((section_index + 1) / total_latent_sections) * 70
+            section_progress = int(section_progress)
+            yield yield_progress("section_complete", section_progress, None, current_frames, video_length, output_filename)
 
         yield yield_progress("completed", 100, None, current_frames, video_length, output_filename)
 
@@ -382,16 +393,17 @@ async def generate_video(request: VideoGenerationRequest):
         if waited > 0.1:
             yield json.dumps({"status": "busy", "message": "Service is busy. Please wait..."}) + "\n"
         output_queue = queue.Queue()
+        local_cancel_event = threading.Event()
         def run_worker():
             try:
-                for progress in video_generation_worker(request):
+                for progress in video_generation_worker(request, cancel_event=local_cancel_event):
                     output_queue.put(progress)
             except Exception as e:
                 output_queue.put({"status": "error", "message": str(e)})
             finally:
                 output_queue.put(None)
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(thread_pool, run_worker)
+        worker_future = loop.run_in_executor(thread_pool, run_worker)
         try:
             while True:
                 result = await loop.run_in_executor(None, output_queue.get)
@@ -401,7 +413,11 @@ async def generate_video(request: VideoGenerationRequest):
                     yield result + "\n"
                 else:
                     yield json.dumps(result) + "\n"
+        except asyncio.CancelledError:
+            local_cancel_event.set()
+            raise
         finally:
+            local_cancel_event.set()
             semaphore.release()
     if not request.input_image:
         raise HTTPException(status_code=400, detail="input_image is required")

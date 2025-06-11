@@ -10,9 +10,12 @@ async def process_batch(json_path, client):
     if not isinstance(items, list):
         print("Input JSON must be an array of objects with 'image' and 'prompt'.")
         return
+    base_dir = os.path.dirname(os.path.abspath(json_path))
     for entry in items:
         image_path = entry.get('image')
         prompt = entry.get('prompt', '')
+        if image_path and not image_path.startswith('/'):
+            image_path = os.path.join(base_dir, image_path)
         if not image_path or not os.path.exists(image_path):
             print(f"Image not found: {image_path}")
             continue
@@ -37,6 +40,8 @@ async def process_batch(json_path, client):
             elif update.get('status') == 'error':
                 print(f"Error: {update.get('message')}")
                 break
+            else:
+                print(update)
 
 if __name__ == "__main__":
     import argparse

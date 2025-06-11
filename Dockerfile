@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Set workdir
-WORKDIR /app
+WORKDIR /workspace
 
 # Copy requirements
 COPY requirements.txt ./
