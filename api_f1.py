@@ -5,6 +5,7 @@ import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
+import time
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
@@ -18,7 +19,7 @@ import math
 import uvicorn
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from PIL import Image
 from diffusers import AutoencoderKLHunyuanVideo
@@ -427,6 +428,31 @@ async def root():
             "GET /": "API information"
         }
     }
+
+
+@app.get("/download")
+async def download_file(file: str):
+    """Download an mp4 file from outputs_folder. Also cleans up old mp4 files (>2h)."""
+    # Clean up old mp4 files
+    now = time.time()
+    for fname in os.listdir(outputs_folder):
+        if fname.endswith(".mp4"):
+            fpath = os.path.join(outputs_folder, fname)
+            try:
+                if os.path.isfile(fpath):
+                    mtime = os.path.getmtime(fpath)
+                    if now - mtime > 2 * 3600:
+                        os.remove(fpath)
+            except Exception:
+                pass
+    # Serve requested file
+    safe_file = os.path.basename(file)
+    file_path = os.path.join(outputs_folder, safe_file)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    if not file_path.endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Only mp4 files are allowed")
+    return FileResponse(file_path, media_type="video/mp4", filename=safe_file)
 
 
 if __name__ == "__main__":

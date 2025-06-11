@@ -217,20 +217,20 @@ class FramePackClient:
                                 preview_count += 1
                             except Exception as e:
                                 print(f"Warning: Failed to save preview image: {e}")
-                        
-                        # Copy output file to local directory if provided
-                        if "output_file" in data:
-                            original_path = data["output_file"]
-                            if os.path.exists(original_path):
-                                # Create local filename
-                                local_filename = os.path.join(
-                                    output_dir,
-                                    os.path.basename(original_path)
-                                )
-                                # Copy file (in real scenario, you might want to download it)
-                                import shutil
-                                shutil.copy2(original_path, local_filename)
-                                data["local_output_file"] = local_filename
+
+                        # Download output file if provided and status is completed
+                        if data.get("status") == "completed" and "output_file" in data:
+                            output_file_name = os.path.basename(data["output_file"])
+                            download_url = f"{self.base_url}/download?file={output_file_name}"
+                            local_filename = os.path.join(output_dir, output_file_name)
+                            async with self.session.get(download_url) as dl_resp:
+                                if dl_resp.status == 200:
+                                    with open(local_filename, "wb") as f:
+                                        f.write(await dl_resp.read())
+                                    data["local_output_file"] = local_filename
+                                else:
+                                    data["local_output_file"] = None
+                                    data["download_error"] = f"Failed to download: {dl_resp.status}"
                         
                         yield data
                         
@@ -239,6 +239,7 @@ class FramePackClient:
                         continue
                 
         except Exception as e:
+            import traceback; traceback.print_exc()
             yield {"status": "error", "message": f"Request failed: {str(e)}"}
 
 
