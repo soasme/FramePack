@@ -13,3 +13,7 @@ torchsde==0.2.6
 einops
 opencv-contrib-python
 safetensors
+torch
+torchvision
+fastapi
+uvicorn[standard]

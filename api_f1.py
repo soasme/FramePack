@@ -38,7 +38,7 @@ from diffusers_helper.bucket_tools import find_nearest_bucket
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", type=str, default='0.0.0.0')
-parser.add_argument("--port", type=int, default=7680)
+parser.add_argument("--port", type=int, default=7860, help="Port to run the API server on (default: 7860)")
 parser.add_argument("--gpu", type=int, default=0, help="GPU device to use (default: 0)")
 args = parser.parse_args()
 
