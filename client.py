@@ -16,19 +16,22 @@ import io
 class FramePackClient:
     """Client for FramePack-F1 Video Generation API."""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 1800):
         """
         Initialize the client.
         
         Args:
             base_url: Base URL of the API server
+            timeout: Timeout for requests in seconds (default: 1800 = 30 minutes)
         """
         self.base_url = base_url.rstrip('/')
+        self.timeout = timeout
         self.session: Optional[aiohttp.ClientSession] = None
     
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = aiohttp.ClientSession()
+        timeout_obj = aiohttp.ClientTimeout(total=self.timeout)
+        self.session = aiohttp.ClientSession(timeout=timeout_obj)
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -264,11 +267,12 @@ async def main():
     parser.add_argument("--mp4-crf", type=int, default=16, help="MP4 compression quality")
     parser.add_argument("--no-previews", action="store_true", help="Don't save preview images")
     parser.add_argument("--health-check", action="store_true", help="Only perform health check")
+    parser.add_argument("--timeout", type=int, default=1800, help="Timeout for requests in seconds (default: 1800 = 30 minutes)")
     
     args = parser.parse_args()
     
     # Create client
-    async with FramePackClient(args.api_url) as client:
+    async with FramePackClient(args.api_url, timeout=args.timeout) as client:
         
         # Health check mode
         if args.health_check:
