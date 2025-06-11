@@ -327,6 +327,8 @@ async def main():
                     
                     if final_output:
                         print(f"📹 Video saved: {final_output}")
+                    else:
+                        print("⚠️  No output file generated: {update.get('download_error', 'Unknown error')}")
                     
                     if "current_frames" in update:
                         print(f"🎬 Total frames: {update['current_frames']}")
