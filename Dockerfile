@@ -23,4 +23,4 @@ COPY . .
 EXPOSE 7860
 
 # Default command
-CMD ["uvicorn", "api_f1:app", "--host", "0.0.0.0", "--port", "7680", "--workers", "1", "--log-level", "info"]
+CMD ["uvicorn", "api_f1:app"]
