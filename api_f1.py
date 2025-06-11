@@ -6,6 +6,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any
 import time
+import queue
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
@@ -38,16 +39,16 @@ from diffusers_helper.bucket_tools import find_nearest_bucket
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", type=str, default='0.0.0.0')
 parser.add_argument("--port", type=int, default=7680)
-parser.add_argument("--workers", type=int, default=None, help="Number of worker processes (auto-detected based on GPUs if not specified)")
+parser.add_argument("--gpu", type=int, default=0, help="GPU device to use (default: 0)")
 args = parser.parse_args()
+
+# Set CUDA_VISIBLE_DEVICES before loading torch or any model
+os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
 print(args)
 
-# Auto-detect GPU count and set workers
-if args.workers is None:
-    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 1
-    args.workers = max(1, gpu_count)
-    print(f"Auto-detected {gpu_count} GPUs, setting workers to {args.workers}")
+# Always use a single worker for single GPU
+args.workers = 1
 
 free_mem_gb = get_cuda_free_memory_gb(gpu)
 high_vram = free_mem_gb > 60
@@ -114,6 +115,7 @@ app = FastAPI(title="FramePack-F1 Video Generation API", version="1.0.0")
 
 # Thread pool for async processing
 thread_pool = ThreadPoolExecutor(max_workers=args.workers)
+semaphore = asyncio.Semaphore(args.workers)
 
 class VideoGenerationRequest(BaseModel):
     input_image: str  # base64 encoded image
@@ -371,37 +373,47 @@ def video_generation_worker(request: VideoGenerationRequest):
 async def generate_video(request: VideoGenerationRequest):
     """
     Generate video from input image and prompt.
-    
-    Returns a streaming response with JSON progress updates.
+    Streams progress updates, and queues if all workers are busy.
     """
-    try:
-        # Validate input image
-        if not request.input_image:
-            raise HTTPException(status_code=400, detail="input_image is required")
-        
-        # Run the video generation in thread pool
+    async def stream_video():
+        start = time.monotonic()
+        await semaphore.acquire()
+        waited = time.monotonic() - start
+        if waited > 0.1:
+            yield json.dumps({"status": "busy", "message": "Service is busy. Please wait..."}) + "\n"
+        output_queue = queue.Queue()
+        def run_worker():
+            try:
+                for progress in video_generation_worker(request):
+                    output_queue.put(progress)
+            except Exception as e:
+                output_queue.put({"status": "error", "message": str(e)})
+            finally:
+                output_queue.put(None)
         loop = asyncio.get_event_loop()
-        
-        def run_generation():
-            for progress_update in video_generation_worker(request):
-                yield progress_update
-        
-        generator = await loop.run_in_executor(thread_pool, lambda: run_generation())
-        
-        return StreamingResponse(
-            generator,
-            media_type="application/x-ndjson",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "application/x-ndjson",
-            }
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        loop.run_in_executor(thread_pool, run_worker)
+        try:
+            while True:
+                result = await loop.run_in_executor(None, output_queue.get)
+                if result is None:
+                    break
+                if isinstance(result, str):
+                    yield result + "\n"
+                else:
+                    yield json.dumps(result) + "\n"
+        finally:
+            semaphore.release()
+    if not request.input_image:
+        raise HTTPException(status_code=400, detail="input_image is required")
+    return StreamingResponse(
+        stream_video(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-ndjson",
+        },
+    )
 
 
 @app.get("/health")
