@@ -21,6 +21,7 @@ COPY . .
 
 # Expose port
 EXPOSE 7860
+EXPOSE 8000
 
 # Default command
-CMD ["uvicorn", "api_f1:app"]
+CMD ["python", "api_f1.py", "--host", "0.0.0.0", "--port", "8000"]
